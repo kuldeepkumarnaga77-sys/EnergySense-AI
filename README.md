@@ -258,13 +258,25 @@ http://127.0.0.1:5000
 
 
 
-\## 📸 Screenshots
+## 📸 Project Screenshots
 
+### Energy Analytics Dashboard
+![Dashboard](./screenshots/dashboard.png)
 
+### EnergyBot AI Chatbot
+![Chatbot](./screenshots/chatbot.png)
 
-Screenshots of the dashboard, AI chatbot, PDF analyzer
+### PDF Bill Analyzer
+![PDF Analyzer](./screenshots/pdf-analyzer.png)
 
-and Prompt Engineering Playground will be added here.
+### Prompt Engineering Playground
+![Playground](./screenshots/playground.png)
+
+### Dark Mode
+![Dark Mode](./screenshots/dark-mode.png)
+
+### Electricity Bill Calculator
+![Calculator](./screenshots/calculator.png)
 
 
 
