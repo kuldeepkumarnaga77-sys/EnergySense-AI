@@ -1,4 +1,5 @@
 import os, math, re
+from ai_provider import generate_ai
 from flask import Flask,render_template,request,redirect,url_for,jsonify,abort,session
 from dotenv import load_dotenv
 from database import connect,init,seed
@@ -19,6 +20,12 @@ def data():
 def index(): return render_template('index.html',d=data())
 @app.post('/change')
 def change():
+    if os.getenv("AI_PROVIDER", "ollama") == "demo":
+        return (
+            "Public demo uses read-only sample data. "
+            "Use the local version to modify records.",
+            403
+        )    
     try:
         action=request.form['action']
         with connect() as c:
@@ -62,19 +69,35 @@ def chat():
             answer=f"{a['name']}: estimated monthly saving is {units} kWh and ₹{a['saving']} at ₹{d['settings']['rate']}/kWh, assuming up to one hour less usage daily for 30 days."
             if hinglish: answer=f"{a['name']} ka daily usage ek ghanta tak kam karne se 30 din mein {units} units aur ₹{a['saving']} ki estimated saving hogi."
             return jsonify(answer=answer, mode="Verified calculation")
+    
     try:
-        import json, urllib.request
         prompt = context_prompt(d, q)
-        if hinglish: prompt += "\nAnswer in Roman-script Hinglish only."
-        payload = {'model':'qwen2.5:3b','messages':[{'role':'system','content':SYSTEM},{'role':'user','content':prompt}], 'stream':False,'options':{'temperature':0.15,'num_predict':220,'repeat_penalty':1.2,'repeat_last_n':128}}
-        req=urllib.request.Request('http://127.0.0.1:11434/api/chat',data=json.dumps(payload).encode('utf-8'),headers={'Content-Type':'application/json'})
-        with urllib.request.urlopen(req,timeout=180) as response:
-            answer=json.load(response)['message']['content'].strip()
-        words=answer.lower().split()
-        grams=[tuple(words[i:i+4]) for i in range(len(words)-3)]
-        if not answer or (grams and len(set(grams))/len(grams)<0.65) or (hinglish and re.search(r"[\u0900-\u097f]",answer)):
-            raise ValueError('Response quality check failed')
-        return jsonify(answer=answer,mode='Ollama AI - Qwen2.5')
+
+        if hinglish:
+            prompt += "\nAnswer in Roman-script Hinglish only."
+        if os.getenv("AI_PROVIDER", "ollama") == "demo":
+            return jsonify(
+                answer=fallback,
+                mode="Online Demo - Rule-based Assistant"
+            )
+        answer, mode = generate_ai(SYSTEM, prompt)
+
+        words = answer.lower().split()
+
+        grams = [
+            tuple(words[i:i+4])
+            for i in range(len(words)-3)
+        ]
+
+        if not answer or (
+            grams and len(set(grams))/len(grams) < 0.65
+        ) or (
+            hinglish and re.search(r"[\u0900-\u097f]", answer)
+        ):
+            raise ValueError("Response quality check failed")
+
+        return jsonify(answer=answer, mode=mode)
+
     except Exception as e:
         print('Ollama error:',e)
         if hinglish:

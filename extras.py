@@ -1,4 +1,6 @@
+import os
 import io,re,json,urllib.request
+from ai_provider import generate_ai
 from xml.sax.saxutils import escape
 from flask import request,jsonify,send_file
 
@@ -16,7 +18,7 @@ def register(app,data,system,context_prompt):
             if not text.strip(): return jsonify(error='No selectable text found. Scanned bills require OCR, not included.'),400
             patterns={'Consumption (kWh)':r'(?:units consumed|consumption|energy consumed|billed units)\s*[:=]?\s*([\d,.]+)', 'Amount due (INR)':r'(?:total amount due|amount payable|net payable|amount due|total bill amount)\s*[:=]?\s*(?:₹|Rs\.?|INR)?\s*([\d,.]+)', 'Billing period':r'(?:billing period|bill period)\s*[:=]?\s*([^\n]{3,80})'}
             fields={k:(m.group(1) if (m:=re.search(v,text,re.I)) else 'Not detected') for k,v in patterns.items()}
-            return jsonify(fields=fields,note='Candidate fields only; verify against original bill. First 10 pages processed locally. No upload retained.')
+            return jsonify(fields=fields,note='Candidate fields only; verify against original bill. First 10 pages processed by the application server. No upload retained.')
         except Exception: return jsonify(error='Could not read this PDF. Use an unlocked, valid text PDF.'),400
     @app.get('/report')
     def report():
@@ -29,12 +31,85 @@ def register(app,data,system,context_prompt):
         t=Table(rows,colWidths=[165,65,90,145],repeatRows=1);t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#123b46')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.whitesmoke,colors.white]),('VALIGN',(0,0),(-1,-1),'TOP'),('BOTTOMPADDING',(0,0),(-1,-1),9)]));story.extend([t,Spacer(1,15),Paragraph('Estimates assume 30 days and exclude fixed charges and taxes. Savings assume up to one hour less daily use when safe and practical. Carbon uses the configured illustrative factor.',s['Normal'])]);SimpleDocTemplate(b,pagesize=A4).build(story);b.seek(0);return send_file(b,mimetype='application/pdf',as_attachment=True,download_name='EnergySense_report.pdf')
     @app.post('/playground')
     def playground():
-        q=str((request.get_json(silent=True) or {}).get('question','')).strip()[:500]
-        if not q or not re.search(r'electric|energy|bill|appliance|kwh|saving|consumption|bijli|tariff|\bac\b',q,re.I) or re.search(r'wir|bypass|tamper|hack',q,re.I): return jsonify(error='Use a safe household energy question.'),400
-        def run(sys,prompt):
-            payload={'model':'qwen2.5:3b','messages':[{'role':'system','content':sys},{'role':'user','content':prompt}],'stream':False,'options':{'temperature':0.15,'num_predict':220,'repeat_penalty':1.2}}
-            req=urllib.request.Request('http://127.0.0.1:11434/api/chat',data=json.dumps(payload).encode(),headers={'Content-Type':'application/json'})
-            with urllib.request.urlopen(req,timeout=180) as r: return json.load(r)['message']['content']
-        engineered=context_prompt(data(),q)
-        try: return jsonify(basic=run('Answer household energy questions briefly and safely. Do not invent facts.',q),engineered=run(system,engineered),prompt=engineered,system=system)
-        except Exception: return jsonify(error='Ollama unavailable or timed out. Check local service and model.'),503
+
+        q = str(
+            (request.get_json(silent=True) or {})
+            .get('question', '')
+        ).strip()[:500]
+
+        if (
+            not q
+            or not re.search(
+                r'electric|energy|bill|appliance|kwh|saving|consumption|bijli|tariff|\bac\b',
+                q, re.I
+            )
+            or re.search(r'wir|bypass|tamper|hack', q, re.I)
+        ):
+            return jsonify(
+                error="Use a safe household energy question."
+            ), 400
+
+        d = data()
+        engineered = context_prompt(d, q)
+
+        if os.getenv("AI_PROVIDER", "ollama") == "demo":
+
+            basic = (
+                "[Illustrative demo - not AI-generated]\n\n"
+                "Reduce unnecessary appliance usage, "
+                "switch off unused lights and fans, "
+                "and use energy-efficient appliances."
+            )
+
+            contextual = (
+                "[Illustrative demo - not AI-generated]\n\n"
+                f"Monthly consumption: {d['total']} kWh.\n"
+                f"Estimated bill: INR {d['bill']}.\n"
+                f"Tariff: INR {d['settings']['rate']}/kWh.\n"
+            )
+
+            top = d['top']
+
+            if top:
+                contextual += (
+                    f"Highest consuming appliance: "
+                    f"{top['name']}.\n"
+                    f"Monthly consumption: "
+                    f"{top['units']} kWh.\n"
+                    f"Potential monthly saving: "
+                    f"INR {top['saving']} by reducing "
+                    "daily usage by up to one hour, "
+                    "when safe and practical."
+                )
+
+            return jsonify(
+                basic=basic,
+                engineered=contextual,
+                prompt=engineered,
+                system=system,
+                mode="Illustrative Demo"
+            )
+
+        try:
+            basic, _ = generate_ai(
+                "Answer household energy questions briefly "
+                "and safely. Do not invent facts.",
+                q
+            )
+
+            improved, _ = generate_ai(
+                system, engineered
+            )
+
+            return jsonify(
+                basic=basic,
+                engineered=improved,
+                prompt=engineered,
+                system=system,
+                mode="Ollama Generative AI"
+            )
+
+        except Exception:
+            return jsonify(
+                error="Ollama unavailable or timed out."
+            ), 503
